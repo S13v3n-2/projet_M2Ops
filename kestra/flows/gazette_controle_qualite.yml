@@ -6,6 +6,8 @@ description: |
   Vérifie trois faits sur les articles propres et les rejets du jour : aucune date
   future, aucun titre vide, taux de rejet de chaque source inférieur ou égal à 80 %.
   Un contrôle en échec fait sortir le conteneur en code 1, l'exécution passe en FAILED.
+  Les chiffres du contrôle sont publiés en métriques de tâche par une ligne ::{}:: sur
+  la sortie standard. Un échec déclenche le bloc errors, qui alerte un webhook Discord.
   L'étape tourne dans un conteneur de l'image gazette:local
   (docker compose --profile build build).
 
@@ -27,6 +29,15 @@ tasks:
       S3_REGION: "{{ envs.s3_region }}"
       AWS_ACCESS_KEY_ID: "{{ envs.aws_access_key_id }}"
       AWS_SECRET_ACCESS_KEY: "{{ envs.aws_secret_access_key }}"
+
+errors:
+  - id: alerte_discord
+    type: io.kestra.plugin.core.http.Request
+    uri: "{{ envs.alert_webhook_url }}"
+    method: POST
+    contentType: application/json
+    body: |
+      {"content": "Gazette des sorciers : le controle de qualite a echoue. Execution {{ execution.id }}, voir {{ kestra.url }}/ui/main/executions/{{ flow.namespace }}/{{ flow.id }}/{{ execution.id }}"}
 
 triggers:
   - id: apres-nettoyage
