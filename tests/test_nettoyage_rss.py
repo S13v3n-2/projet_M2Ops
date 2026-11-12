@@ -1,4 +1,9 @@
-from la_gazette_des_sorciers.nettoyage_rss import date_depuis_url, nettoyer_flux, parser_date
+from la_gazette_des_sorciers.nettoyage_rss import (
+    date_depuis_url,
+    lignes_pour_la_base,
+    nettoyer_flux,
+    parser_date,
+)
 
 
 def flux(items, fetched_at="2026-10-21T08:00:00+00:00"):
@@ -73,3 +78,42 @@ def test_regle_horoscope_va_dans_les_rejets():
     articles, rejets, stats = nettoyer_flux(flux(items))
     assert articles == []
     assert rejets[0]["regle"] == "R01_horoscope"
+
+
+def test_lignes_pour_la_base_en_utc_sans_fuseau():
+    data = {**flux([]), "filepath": "data/xml/test.xml"}
+    articles = [
+        {
+            "source_id": "test",
+            "title": "t",
+            "url": "https://e.fr/a",
+            "guid": "g",
+            "published_at": "2026-10-21T06:00:00+00:00",
+            "description": "d",
+            "date_source": "pubDate",
+        }
+    ]
+    rejets = [
+        {"source_id": "test", "title": "h", "url": "https://e.fr/h", "regle": "R01_horoscope"}
+    ]
+    lignes_articles, lignes_rejets = lignes_pour_la_base(articles, rejets, data)
+    assert lignes_articles[0]["published_at"].isoformat() == "2026-10-21T06:00:00"
+    assert lignes_articles[0]["collecte_le"].isoformat() == "2026-10-21T08:00:00"
+    assert lignes_articles[0]["fichier_brut"] == "data/xml/test.xml"
+    assert lignes_rejets[0]["regle"] == "R01_horoscope"
+
+
+def test_date_future_et_description_bornee():
+    items = [
+        {"title": "futur", "link": "https://e.fr/f", "pubDate": "Thu, 22 Oct 2026 06:00:00 GMT"},
+        {
+            "title": "long",
+            "link": "https://e.fr/l",
+            "pubDate": "Wed, 21 Oct 2026 07:30:00 GMT",
+            "description": "mot " * 200,
+        },
+    ]
+    articles, rejets, stats = nettoyer_flux(flux(items))
+    assert [r["regle"] for r in rejets] == ["R00_date_future"]
+    assert len(articles) == 1
+    assert len(articles[0]["description"]) <= 300

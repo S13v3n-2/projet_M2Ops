@@ -1,4 +1,3 @@
-import html
 import json
 import logging
 import os
@@ -10,6 +9,8 @@ from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 
+from la_gazette_des_sorciers.dedoublonnage import Dedoublonneur
+from la_gazette_des_sorciers.normalisation import borner_extrait, nettoyer
 from la_gazette_des_sorciers.rapport_qualite import construire_rapport, ecrire_rapport
 from la_gazette_des_sorciers.regles import appliquer_regles
 
@@ -18,9 +19,12 @@ load_dotenv()
 logger = logging.getLogger("nettoyage_rss")
 
 MAX_AGE = timedelta(hours=24)
+# marge pour les décalages d'horloge entre le site et nous
+TOLERANCE_FUTUR = timedelta(hours=1)
 # R00 = validité de la donnée (les règles éditoriales sont dans regles.py)
 R00_INVALIDE = "R00_invalide"
 R00_TROP_VIEUX = "R00_trop_vieux"
+R00_DATE_FUTURE = "R00_date_future"
 PARIS = ZoneInfo("Europe/Paris")
 # Le Parisien : pas de pubDate, mais le lien finit par -jj-mm-aaaa-IDENTIFIANT.php
 DATE_DANS_URL = re.compile(r"-(\d{2})-(\d{2})-(\d{4})-[A-Za-z0-9]+\.php$")
@@ -43,8 +47,7 @@ def texte(valeur) -> str:
 
 
 def nettoyer_texte(valeur) -> str:
-    brut = html.unescape(re.sub(r"<[^>]+>", " ", texte(valeur)))
-    return re.sub(r"\s+", " ", brut).strip()
+    return nettoyer(texte(valeur))
 
 
 def parser_date(valeur) -> datetime | None:
@@ -94,7 +97,7 @@ def nettoyer_item(item: dict, source_id: str, fetched_at: datetime) -> dict | No
         "guid": texte(item.get("guid")) or url,
         "published_at": publie.isoformat(),
         "date_source": date_source,
-        "description": nettoyer_texte(item.get("description")),
+        "description": borner_extrait(nettoyer_texte(item.get("description"))),
     }
 
 
@@ -128,7 +131,11 @@ def nettoyer_flux(data: dict) -> tuple[list[dict], list[dict], dict]:
                 }
             )
             continue
-        if fetched_at - datetime.fromisoformat(article["published_at"]) > MAX_AGE:
+        publie = datetime.fromisoformat(article["published_at"])
+        if publie - fetched_at > TOLERANCE_FUTUR:
+            rejets.append({**article, "regle": R00_DATE_FUTURE})
+            continue
+        if fetched_at - publie > MAX_AGE:
             stats["trop_vieux"] += 1
             rejets.append({**article, "regle": R00_TROP_VIEUX})
             continue
@@ -140,6 +147,44 @@ def nettoyer_flux(data: dict) -> tuple[list[dict], list[dict], dict]:
             stats[f"date_{article['date_source']}"] += 1
         articles.append(article)
     return articles, rejets, stats
+
+
+def en_utc_naif(valeur: str) -> datetime:
+    # la base stocke des dates UTC sans fuseau (comme la table sources)
+    return datetime.fromisoformat(valeur).astimezone(UTC).replace(tzinfo=None)
+
+
+def lignes_pour_la_base(
+    articles: list[dict], rejets: list[dict], data: dict
+) -> tuple[list[dict], list[dict]]:
+    collecte_le = en_utc_naif(data["fetched_at"])
+    fichier_brut = data["filepath"]
+    lignes_articles = [
+        {
+            "source_id": a["source_id"],
+            "url": a["url"],
+            "guid": a["guid"],
+            "title": a["title"],
+            "description": a["description"],
+            "published_at": en_utc_naif(a["published_at"]),
+            "date_source": a["date_source"],
+            "collecte_le": collecte_le,
+            "fichier_brut": fichier_brut,
+        }
+        for a in articles
+    ]
+    lignes_rejets = [
+        {
+            "source_id": r["source_id"],
+            "url": r["url"],
+            "title": r["title"],
+            "regle": r["regle"],
+            "collecte_le": collecte_le,
+            "fichier_brut": fichier_brut,
+        }
+        for r in rejets
+    ]
+    return lignes_articles, lignes_rejets
 
 
 def stocker_propre(articles: list[dict], data: dict, clean_dir: Path) -> Path:
@@ -157,12 +202,22 @@ def main():
     json_dir, clean_dir = data_dir / "json", data_dir / "clean"
     rapports_dir = Path(os.environ.get("RAPPORTS_DIR", "rapports")).resolve()
     resultats = []
+    dedoublonneur = Dedoublonneur()
+    # import ici : database.db lit DATABASE_URL dès l'import, ce qui casserait les tests
+    from la_gazette_des_sorciers.database.crud_articles import inserer_articles, inserer_rejets
+    from la_gazette_des_sorciers.database.db import SessionLocal
 
     for fichier in sorted(json_dir.rglob("*.json")):
         with open(fichier, encoding="utf-8") as f:
             data = json.load(f)
         articles, rejets, stats = nettoyer_flux(data)
+        articles, doublons = dedoublonneur.filtrer(articles)
+        rejets += doublons
         stocker_propre(articles, data, clean_dir)
+        lignes_articles, lignes_rejets = lignes_pour_la_base(articles, rejets, data)
+        with SessionLocal() as session:
+            inserer_articles(session, lignes_articles)
+            inserer_rejets(session, lignes_rejets)
         resultats.append(
             {
                 "source_id": data["source_id"],
