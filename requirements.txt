@@ -46,6 +46,8 @@ typing-extensions==4.16.0
     # via
     #   alembic
     #   sqlalchemy
+tzdata==2026.6
+    # via la_gazette_des_sorciers (pyproject.toml)
 urllib3==2.8.0
     # via
     #   botocore
