@@ -1,0 +1,21 @@
+title = "gazette"
+
+[extend]
+# règles par défaut de gitleaks
+useDefault = true
+
+[allowlist]
+description = "valeurs factices du dépôt"
+regexes = [
+  # modèles du .env.example
+  '''replace-with-your-[a-z-]+''',
+  # identifiants jetables des workflows de test
+  '''ci-access-key''',
+  '''ci-secret-key-[0-9]+''',
+  '''ci-password''',
+  # valeurs par défaut du compose de dev
+  '''Admin1234''',
+]
+paths = [
+  '''data/''',
+]
