@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import re
+import sys
 from datetime import UTC, date, datetime, timedelta
 from email.utils import parsedate_to_datetime
 from pathlib import Path
@@ -300,5 +301,7 @@ if __name__ == "__main__":
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
+        # Kestra affiche tout ce qui sort sur stderr en ERROR, donc on passe en stdout
+        stream=sys.stdout,
     )
     main()
