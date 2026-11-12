@@ -15,6 +15,15 @@ tasks:
       - python
       - -m
       - la_gazette_des_sorciers.collecte_xml
+    networkMode: gazette
+    env:
+      DATABASE_URL: "{{ envs.database_url }}"
+      S3_ENABLED: "{{ envs.s3_enabled }}"
+      S3_ENDPOINT_URL: "{{ envs.s3_endpoint_url }}"
+      S3_BUCKET: "{{ envs.s3_bucket }}"
+      S3_REGION: "{{ envs.s3_region }}"
+      AWS_ACCESS_KEY_ID: "{{ envs.aws_access_key_id }}"
+      AWS_SECRET_ACCESS_KEY: "{{ envs.aws_secret_access_key }}"
     volumes:
       - "{{ envs.data_dir }}:/data"
 
@@ -26,6 +35,15 @@ tasks:
       - python
       - -m
       - la_gazette_des_sorciers.collecte_json
+    networkMode: gazette
+    env:
+      DATABASE_URL: "{{ envs.database_url }}"
+      S3_ENABLED: "{{ envs.s3_enabled }}"
+      S3_ENDPOINT_URL: "{{ envs.s3_endpoint_url }}"
+      S3_BUCKET: "{{ envs.s3_bucket }}"
+      S3_REGION: "{{ envs.s3_region }}"
+      AWS_ACCESS_KEY_ID: "{{ envs.aws_access_key_id }}"
+      AWS_SECRET_ACCESS_KEY: "{{ envs.aws_secret_access_key }}"
     volumes:
       - "{{ envs.data_dir }}:/data"
 

@@ -1,14 +1,143 @@
+# Stack locale complète :
+#   rustfs    : data lake S3 (bronze : XML et JSON bruts)
+#   db        : PostgreSQL des données (silver et gold)
+#   adminer   : interface web pour la base db
+#   kestra    : orchestrateur, avec sa propre base kestra-db
+#
+#   docker compose --profile build build   # construit l'image gazette:local
+#   docker compose up -d                   # démarre tout
+#
+# Kestra : http://localhost:8080 - Console RustFS : http://localhost:9001
+# Adminer : http://localhost:8081
+
+name: gazette
+
+networks:
+  default:
+    # nom fixe : les tâches Kestra rejoignent ce réseau pour joindre db et rustfs
+    name: gazette
+
+volumes:
+  rustfs-data:
+  db-data:
+  kestra-db-data:
+  kestra-data:
+
 services:
+  rustfs:
+    image: rustfs/rustfs:1.0.5
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - rustfs-data:/data
+    environment:
+      RUSTFS_VOLUMES: /data
+      RUSTFS_ADDRESS: 0.0.0.0:9000
+      RUSTFS_CONSOLE_ENABLE: "true"
+      RUSTFS_CONSOLE_ADDRESS: 0.0.0.0:9001
+      RUSTFS_ACCESS_KEY: ${AWS_ACCESS_KEY_ID:?à définir dans .env}
+      RUSTFS_SECRET_KEY: ${AWS_SECRET_ACCESS_KEY:?à définir dans .env}
+    restart: unless-stopped
+
   db:
     image: postgres:16
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: la_gazette_des_sorciers
     ports:
       - "5432:5432"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-la_gazette_des_sorciers}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -d $${POSTGRES_DB} -U $${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
   adminer:
     image: adminer:6.1.2-standalone
     ports:
+      - "8081:8080"
+    depends_on:
+      - db
+
+  kestra-db:
+    image: postgres:16
+    volumes:
+      - kestra-db-data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: kestra
+      POSTGRES_USER: kestra
+      POSTGRES_PASSWORD: ${KESTRA_DB_PASSWORD:-kestra}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -d $${POSTGRES_DB} -U $${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  kestra:
+    image: kestra/kestra:latest
+    user: root
+    command: server standalone
+    depends_on:
+      kestra-db:
+        condition: service_healthy
+    ports:
       - "8080:8080"
+    volumes:
+      - kestra-data:/app/storage
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      # Variables ENV_* : disponibles dans les flows via {{ envs.nom_en_minuscules }}
+      # Chemin ABSOLU côté hôte du dossier de données (nettoyage, encore en local) :
+      # les conteneurs lancés par Kestra le montent via le démon Docker.
+      ENV_DATA_DIR: ${DATA_DIR_HOST:?à définir dans .env}
+      # Dans le réseau docker, db et rustfs se joignent par leur nom de service
+      ENV_DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-la_gazette_des_sorciers}
+      ENV_S3_ENABLED: ${S3_ENABLED:-true}
+      ENV_S3_ENDPOINT_URL: http://rustfs:9000
+      ENV_S3_BUCKET: ${S3_BUCKET:-gazette-bronze}
+      ENV_S3_REGION: ${S3_REGION:-us-east-1}
+      ENV_AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:?à définir dans .env}
+      ENV_AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:?à définir dans .env}
+      KESTRA_CONFIGURATION: |
+        datasources:
+          postgres:
+            url: jdbc:postgresql://kestra-db:5432/kestra
+            driverClassName: org.postgresql.Driver
+            username: kestra
+            password: ${KESTRA_DB_PASSWORD:-kestra}
+        kestra:
+          server:
+            basic-auth:
+              username: ${KESTRA_USER:-admin@kestra.io}
+              password: ${KESTRA_PASSWORD:-Admin1234}
+          repository:
+            type: postgres
+          storage:
+            type: local
+            local:
+              base-path: /app/storage
+          queue:
+            type: postgres
+          url: http://localhost:8080/
+          tutorialFlows:
+            enabled: false
+          # Les montages de volumes sont désactivés par défaut dans les tâches Docker.
+          plugins:
+            configurations:
+              - type: io.kestra.plugin.docker.Run
+                values:
+                  volume-enabled: true
+              - type: io.kestra.plugin.scripts.runner.docker.Docker
+                values:
+                  volume-enabled: true
+
+  # Image des scripts python (jamais démarrée ici, seulement construite).
+  gazette:
+    profiles: [build]
+    image: gazette:local
+    build:
+      context: .

@@ -32,22 +32,21 @@ pip install -e ".[dev]"
 
 4. Configuration de l'environnement
 
-Créer un fichier `.env` à la racine du projet (ignoré par git) avec l'URL de la base de données, correspondant au `docker-compose.yml` :
+Copier `.env.example` vers `.env` (ignoré par git) et renseigner au minimum `AWS_ACCESS_KEY_ID` et `AWS_SECRET_ACCESS_KEY` (clés du data lake RustFS). Le même fichier sert aux scripts python en local et à `docker compose`.
 
-```env
-DATABASE_URL=postgresql+psycopg2://postgres:postgres@localhost:5432/la_gazette_des_sorciers
-```
+5. Lancement des services
 
-5. Lancement de la base de données
+Un seul `docker-compose.yml` à la racine :
+
+| Service | Rôle | Accès |
+|---|---|---|
+| `rustfs` | data lake S3, couche bronze | API `http://localhost:9000`, console `http://localhost:9001` |
+| `db` | PostgreSQL des données, couches silver et gold | `localhost:5432` |
+| `adminer` | interface web de la base `db` | `http://localhost:8081` (système PostgreSQL, serveur `db`) |
+| `kestra` et `kestra-db` | orchestrateur et sa base | `http://localhost:8080` |
 
 ```bash
-docker compose up -d db
-```
-
-La base PostgreSQL est exposée sur le port `5432`. Pour l'interface Adminer (`http://localhost:8080`, système PostgreSQL, serveur `db`) :
-
-```bash
-docker compose up -d adminer
+docker compose up -d rustfs db adminer
 ```
 
 6. Application des migrations Alembic
@@ -84,23 +83,16 @@ La collecte utilise une seule destination, choisie par `S3_ENABLED` :
 Le module `stockage_s3` sert à transférer vers S3 des fichiers collectés en
 mode local lors d'une exécution précédente. Il n'est pas nécessaire en mode S3.
 
-1. Copier `.env.example` vers `.env`. Le mode local (`S3_ENABLED=false`) est la
-   valeur par défaut. Pour utiliser S3, définir `S3_ENABLED=true` et renseigner
-   les identifiants du serveur. `.env` est ignoré par Git. `S3_ENDPOINT_URL`
-   doit viser l'API S3, et non la console web. Pour RustFS local, les ports
-   habituels sont `9000` et `9001`.
+1. Le mode S3 est activé dans `.env` avec `S3_ENABLED=true` (valeur de `.env.example`).
+   Avec `S3_ENABLED=false`, tout reste sur disque dans `DATA_DIR`.
+   `S3_ENDPOINT_URL` doit viser l'API S3 (`http://127.0.0.1:9000`), et non la console web.
    Les chemins relatifs de `.env`, comme `./sources.csv` et `./data`, sont résolus
    depuis le dossier contenant `.env`, même si les scripts sont lancés ailleurs.
-   Sur un poste sans bucket, conserver `S3_ENABLED=false`.
 
-2. Démarrer RustFS dans un autre terminal PowerShell, avec les **mêmes**
-   identifiants que `AWS_ACCESS_KEY_ID` et `AWS_SECRET_ACCESS_KEY` dans `.env` :
+2. Démarrer RustFS, qui utilise les clés `AWS_ACCESS_KEY_ID` et `AWS_SECRET_ACCESS_KEY` de `.env` :
 
-```powershell
-$env:RUSTFS_ACCESS_KEY = "<access-key>"
-$env:RUSTFS_SECRET_KEY = "<secret-key>"
-New-Item -ItemType Directory -Force .\.local\rustfs | Out-Null
-& "<chemin-vers-rustfs.exe>" server --address "127.0.0.1:9000" --console-enable --console-address "127.0.0.1:9001" ".\.local\rustfs"
+```bash
+docker compose up -d rustfs
 ```
 
 3. Depuis la racine du projet, avec Python 3.12 et les dépendances installées :
@@ -146,18 +138,20 @@ docker run --rm la_gazette_des_sorciers
 ## Pipeline Kestra
 
 Kestra lance chaque étape dans un conteneur de l'image `gazette:local` :
-`collecte` (flux RSS -> XML brut + JSON dans `data/raw/`) puis `nettoyage` (-> `data/clean/<date>/articles.json`).
+`collecte` (flux RSS -> XML et JSON bruts dans le bucket RustFS) puis `nettoyage` (-> `data/clean/<date>/articles.json`).
+
+Les tâches rejoignent le réseau docker `gazette` et reçoivent `DATABASE_URL` et les variables `S3_*` depuis le conteneur Kestra. Dans ce réseau, la base est `db:5432` et le data lake `http://rustfs:9000`.
 
 ```bash
-cd containers
-cp .env.example .env                    # puis renseigner DATA_DIR_HOST
+cp .env.example .env                    # puis renseigner les clés S3 et DATA_DIR_HOST
 docker compose --profile build build    # image gazette:local
-docker compose up -d                    # Kestra sur http://localhost:8080
-curl -u admin@kestra.io:Admin1234 -X POST -H 'Content-Type: application/x-yaml'      --data-binary @../kestra/flows/gazette.yml http://localhost:8080/api/v1/main/flows   # déploie le flow
+docker compose up -d                    # tous les services, Kestra sur http://localhost:8080
+curl -u admin@kestra.io:Admin1234 -X POST -H 'Content-Type: application/x-yaml'      --data-binary @kestra/flows/gazette_download_article.yml http://localhost:8080/api/v1/main/flows   # déploie un flow
 ```
 
-Le flow `gazette/gazette` se lance depuis l'interface (Execute) ou tous les jours à 6h (Europe/Paris).
-Les données sont stockées en local dans `data/` (ignoré par git), en attendant un bucket S3.
+Penser à appliquer les migrations (`alembic upgrade head`) et à importer les sources avant la première exécution.
+Le flow `gazette/gazette_download_article` se lance depuis l'interface (Execute) ou par son déclencheur planifié.
+Le nettoyage lit encore les données sur disque dans `data/` (ignoré par git).
 
 ## Pour aller plus loin
 
