@@ -6,6 +6,7 @@ from sqlalchemy import delete, select
 
 from la_gazette_des_sorciers import nettoyage_rss
 from la_gazette_des_sorciers.database.db_models import ArticlesPropres, Rejets, Sources
+from la_gazette_des_sorciers.stockage_s3 import assurer_bucket
 
 pytestmark = pytest.mark.integration
 
@@ -13,7 +14,8 @@ SOURCE = "test_nettoyage_reel"
 
 
 def test_nettoyage_lit_le_bucket_et_ecrit_base_et_rapport(s3, db, monkeypatch):
-    client, bucket, _ = s3
+    client, bucket, region = s3
+    assurer_bucket(client, bucket, region)
     maintenant = datetime.now(UTC)
     jour = maintenant.date()
     cle_brute = f"xml/{jour.isoformat()}/test.xml"
