@@ -10,10 +10,16 @@ from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 
+from la_gazette_des_sorciers.collecte_json import lire_objet_s3
 from la_gazette_des_sorciers.dedoublonnage import Dedoublonneur
 from la_gazette_des_sorciers.normalisation import borner_extrait, nettoyer
-from la_gazette_des_sorciers.rapport_qualite import construire_rapport, ecrire_rapport
+from la_gazette_des_sorciers.rapport_qualite import (
+    construire_rapport,
+    deposer_rapport,
+    ecrire_rapport,
+)
 from la_gazette_des_sorciers.regles import appliquer_regles
+from la_gazette_des_sorciers.stockage_s3 import assurer_bucket, connecter_bronze
 
 load_dotenv()
 
@@ -159,7 +165,8 @@ def lignes_pour_la_base(
     articles: list[dict], rejets: list[dict], data: dict
 ) -> tuple[list[dict], list[dict]]:
     collecte_le = en_utc_naif(data["fetched_at"])
-    fichier_brut = data["filepath"]
+    # en mode S3 le JSON porte s3_key, en mode disque filepath
+    fichier_brut = data.get("s3_key") or data.get("filepath")
     lignes_articles = [
         {
             "source_id": a["source_id"],
@@ -203,36 +210,41 @@ def fichiers_du_jour(json_dir: Path, jour: date) -> list[Path]:
     return sorted((json_dir / jour.isoformat()).glob("*.json"))
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Nettoyage des flux RSS d'un jour de collecte")
-    parser.add_argument(
-        "--date",
-        type=date.fromisoformat,
-        help="jour de collecte à traiter, AAAA-MM-JJ (par défaut : aujourd'hui, UTC)",
-    )
-    jour = parser.parse_args().date or datetime.now(UTC).date()
+def cles_du_jour_s3(client, bucket: str, jour: date) -> list[str]:
+    prefixe = f"json/{jour.isoformat()}/"
+    cles = []
+    for page in client.get_paginator("list_objects_v2").paginate(Bucket=bucket, Prefix=prefixe):
+        cles += [o["Key"] for o in page.get("Contents", []) if o["Key"].endswith(".json")]
+    return sorted(cles)
 
-    data_dir = Path(os.environ["DATA_DIR"]).resolve()
-    json_dir, clean_dir = data_dir / "json", data_dir / "clean"
-    rapports_dir = Path(os.environ.get("RAPPORTS_DIR", "rapports")).resolve()
+
+def flux_du_jour(jour: date, client, bucket: str):
+    """Renvoie le contenu de chaque JSON brut du jour, dans le bucket ou sur disque."""
+    if client is not None:
+        for cle in cles_du_jour_s3(client, bucket, jour):
+            yield json.loads(lire_objet_s3(client, bucket, cle))
+        return
+    json_dir = Path(os.environ["DATA_DIR"]).resolve() / "json"
+    for fichier in fichiers_du_jour(json_dir, jour):
+        with open(fichier, encoding="utf-8") as f:
+            yield json.load(f)
+
+
+def nettoyer_jour(jour: date) -> None:
+    client, bucket, region = connecter_bronze()
     resultats = []
     dedoublonneur = Dedoublonneur()
     # import ici : database.db lit DATABASE_URL dès l'import, ce qui casserait les tests
     from la_gazette_des_sorciers.database.crud_articles import inserer_articles, inserer_rejets
     from la_gazette_des_sorciers.database.db import SessionLocal
 
-    fichiers = fichiers_du_jour(json_dir, jour)
-    if not fichiers:
-        logger.warning("aucun JSON collecté pour le %s dans %s", jour, json_dir)
-        return
-
-    for fichier in fichiers:
-        with open(fichier, encoding="utf-8") as f:
-            data = json.load(f)
+    for data in flux_du_jour(jour, client, bucket):
         articles, rejets, stats = nettoyer_flux(data)
         articles, doublons = dedoublonneur.filtrer(articles)
         rejets += doublons
-        stocker_propre(articles, data, clean_dir)
+        if client is None:
+            clean_dir = Path(os.environ["DATA_DIR"]).resolve() / "clean"
+            stocker_propre(articles, data, clean_dir)
         lignes_articles, lignes_rejets = lignes_pour_la_base(articles, rejets, data)
         with SessionLocal() as session:
             inserer_articles(session, lignes_articles)
@@ -258,8 +270,29 @@ def main():
             stats["date_collecte"],
         )
 
-    chemin = ecrire_rapport(construire_rapport(resultats), jour, rapports_dir)
-    logger.info("rapport de qualité écrit : %s", chemin)
+    if not resultats:
+        logger.warning("aucun JSON collecté pour le %s", jour)
+        return
+
+    rapport = construire_rapport(resultats)
+    if client is not None:
+        assurer_bucket(client, bucket, region)
+        cle = deposer_rapport(client, bucket, rapport, jour)
+        logger.info("rapport de qualité déposé : s3://%s/%s", bucket, cle)
+    else:
+        rapports_dir = Path(os.environ.get("RAPPORTS_DIR", "rapports")).resolve()
+        chemin = ecrire_rapport(rapport, jour, rapports_dir)
+        logger.info("rapport de qualité écrit : %s", chemin)
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Nettoyage des flux RSS d'un jour de collecte")
+    parser.add_argument(
+        "--date",
+        type=date.fromisoformat,
+        help="jour de collecte à traiter, AAAA-MM-JJ (par défaut : aujourd'hui, UTC)",
+    )
+    nettoyer_jour(parser.parse_args().date or datetime.now(UTC).date())
 
 
 if __name__ == "__main__":

@@ -2,6 +2,8 @@ from collections import Counter
 from datetime import date
 from pathlib import Path
 
+from la_gazette_des_sorciers.stockage_s3 import deposer_contenu
+
 NB_EXEMPLES = 3
 NB_TOP = 5
 
@@ -46,7 +48,7 @@ def construire_rapport(resultats: list[dict]) -> dict:
 
 def rapport_en_markdown(rapport: dict, jour: date) -> str:
     lignes = [
-        f"# Rapport de qualité — {jour.isoformat()}",
+        f"# Rapport de qualité - {jour.isoformat()}",
         "",
         f"- Entrés : **{rapport['entres']}**",
         f"- Gardés : **{rapport['gardes']}**",
@@ -70,7 +72,7 @@ def rapport_en_markdown(rapport: dict, jour: date) -> str:
 
     lignes += ["", f"## Les {NB_TOP} rejets les plus fréquents (règle, source)", ""]
     for t in rapport["top_rejets"]:
-        lignes.append(f"- {t['regle']} — {t['source']} : {t['nombre']}")
+        lignes.append(f"- {t['regle']} - {t['source']} : {t['nombre']}")
     return "\n".join(lignes) + "\n"
 
 
@@ -79,3 +81,10 @@ def ecrire_rapport(rapport: dict, jour: date, dossier: Path) -> Path:
     chemin = dossier / f"qualite-{jour.isoformat()}.md"
     chemin.write_text(rapport_en_markdown(rapport, jour), encoding="utf-8")
     return chemin
+
+
+def deposer_rapport(client, bucket: str, rapport: dict, jour: date) -> str:
+    cle = f"rapports/qualite-{jour.isoformat()}.md"
+    contenu = rapport_en_markdown(rapport, jour).encode("utf-8")
+    deposer_contenu(client, bucket, cle, contenu, "text/markdown")
+    return cle
