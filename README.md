@@ -45,8 +45,10 @@ Un seul `docker-compose.yml` à la racine :
 | `adminer` | interface web de la base `db` | `http://localhost:8081` (système PostgreSQL, serveur `db`) |
 | `kestra` et `kestra-db` | orchestrateur et sa base | `http://localhost:8080` |
 
+Les profils actifs se règlent avec `COMPOSE_PROFILES` dans `.env` : `local` pour `rustfs`, `dev` pour `adminer`. `db`, `kestra` et `kestra-db` démarrent toujours. En prod avec un S3 cloud, on retire le profil `local` et on renseigne `KESTRA_S3_ENDPOINT_URL`.
+
 ```bash
-docker compose up -d rustfs db adminer
+docker compose up -d
 ```
 
 6. Application des migrations Alembic

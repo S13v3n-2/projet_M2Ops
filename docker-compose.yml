@@ -4,8 +4,13 @@
 #   adminer   : interface web pour la base db
 #   kestra    : orchestrateur, avec sa propre base kestra-db
 #
+# Profils (variable COMPOSE_PROFILES du .env, ou option --profile) :
+#   local : rustfs, data lake S3 local (en prod, on pointe vers un S3 cloud et on l'omet)
+#   dev   : adminer
+#   build : construction de l'image gazette:local
+#
 #   docker compose --profile build build   # construit l'image gazette:local
-#   docker compose up -d                   # démarre tout
+#   docker compose up -d                   # démarre db, kestra + les profils actifs
 #
 # Kestra : http://localhost:8080 - Console RustFS : http://localhost:9001
 # Adminer : http://localhost:8081
@@ -25,6 +30,7 @@ volumes:
 
 services:
   rustfs:
+    profiles: [local]
     image: rustfs/rustfs:1.0.5
     ports:
       - "9000:9000"
@@ -57,6 +63,7 @@ services:
       retries: 10
 
   adminer:
+    profiles: [dev]
     image: adminer:6.1.2-standalone
     ports:
       - "8081:8080"
@@ -95,9 +102,10 @@ services:
       # les conteneurs lancés par Kestra le montent via le démon Docker.
       ENV_DATA_DIR: ${DATA_DIR_HOST:?à définir dans .env}
       # Dans le réseau docker, db et rustfs se joignent par leur nom de service
+      # (KESTRA_S3_ENDPOINT_URL à renseigner pour viser un S3 cloud)
       ENV_DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-la_gazette_des_sorciers}
       ENV_S3_ENABLED: ${S3_ENABLED:-true}
-      ENV_S3_ENDPOINT_URL: http://rustfs:9000
+      ENV_S3_ENDPOINT_URL: ${KESTRA_S3_ENDPOINT_URL:-http://rustfs:9000}
       ENV_S3_BUCKET: ${S3_BUCKET:-gazette-bronze}
       ENV_S3_REGION: ${S3_REGION:-us-east-1}
       ENV_AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:?à définir dans .env}
