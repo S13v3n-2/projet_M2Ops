@@ -155,6 +155,26 @@ Penser à appliquer les migrations (`alembic upgrade head`) et à importer les s
 Le flow `gazette/gazette_download_article` se lance depuis l'interface (Execute) ou par son déclencheur planifié.
 Le nettoyage lit encore les données sur disque dans `data/` (ignoré par git).
 
+## Tests et CI
+
+Les tests sont séparés en niveaux avec des marqueurs pytest. Un simple `pytest` ne lance que les tests unitaires.
+
+| Niveau | Marqueur | Prérequis | Commande |
+|---|---|---|---|
+| Unitaires | `unit` (automatique) | aucun | `pytest` |
+| Intégration | `integration` | PostgreSQL et S3 qui tournent (`.env`) | `pytest -m integration` |
+| E2E | `e2e` | stack démarrée et une collecte déjà lancée | `pytest -m e2e` |
+
+Les tests d'intégration utilisent un bucket jetable et appliquent les migrations Alembic. Les tests e2e vérifient que le bucket du jour contient au moins `E2E_MIN_SOURCES` sources (8 par défaut) et que la base enregistre les collectes réussies.
+
+Les workflows GitHub Actions (`.github/workflows/`) :
+
+| Workflow | Déclencheur | Contenu |
+|---|---|---|
+| `ci.yml` | chaque push | ruff, tests unitaires, puis construction et publication de l'image sur ghcr.io (branche `main` seulement) |
+| `integration.yml` | pull request vers `develop` ou `main` | tests d'intégration avec PostgreSQL et RustFS en services, identifiants jetables |
+| `nightly.yml` | tous les jours à 2h (UTC) et à la demande | stack docker compose (db, rustfs), migrations, import des sources, collecte avec l'image `gazette`, puis tests e2e |
+
 ## Pour aller plus loin
 
 1. Génération du requirements.txt
