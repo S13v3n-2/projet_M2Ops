@@ -27,6 +27,13 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# par défaut seuls les tests unitaires tournent, -m integration ou -m e2e pour les autres
+addopts = "-m 'not integration and not e2e'"
+markers = [
+  "unit: test unitaire, sans service externe (marqueur ajouté automatiquement)",
+  "integration: nécessite PostgreSQL et un serveur S3 réels (DATABASE_URL, S3_*)",
+  "e2e: vérifie le résultat d'une collecte réelle sur la stack docker compose",
+]
 
 [tool.ruff]
 line-length = 100
