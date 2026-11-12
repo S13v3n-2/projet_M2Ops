@@ -7,5 +7,6 @@ dist/
 .env
 *.egg-info
 
-# fichier data local
+# fichiers locaux
 data/
+.local/
