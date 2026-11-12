@@ -109,6 +109,7 @@ services:
       ENV_S3_ENDPOINT_URL: ${KESTRA_S3_ENDPOINT_URL:-http://rustfs:9000}
       ENV_S3_BUCKET: ${S3_BUCKET:-gazette-bronze}
       ENV_S3_REGION: ${S3_REGION:-us-east-1}
+      ENV_ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
       ENV_AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:?à définir dans .env}
       ENV_AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:?à définir dans .env}
       KESTRA_CONFIGURATION: |

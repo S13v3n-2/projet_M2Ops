@@ -55,3 +55,14 @@ def test_l_etat_est_conserve_entre_les_appels():
     gardes, doublons = d.filtrer([art("Titre identique pour deux flux", "u2", "b")])
     assert gardes == []
     assert doublons[0]["doublon_de"] == "u1"
+
+
+def test_depeche_d_agence_reprise_a_l_identique():
+    titre = "Séisme de magnitude 6 au large du Japon, pas d'alerte au tsunami (AFP)"
+    depeche = art(titre, "https://source-a.fr/depeche", "source_a")
+    reprise = art(titre, "https://source-b.fr/depeche", "source_b")
+    meme_url = art(titre, "https://source-a.fr/depeche", "source_c")
+    gardes, doublons = dedoublonner([depeche, reprise, meme_url])
+    assert gardes == [depeche]
+    assert [d["regle"] for d in doublons] == ["R11_doublon_approx", "R10_doublon_exact"]
+    assert doublons[0]["doublon_de"] == "https://source-a.fr/depeche"
