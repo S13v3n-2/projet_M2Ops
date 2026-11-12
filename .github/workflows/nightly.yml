@@ -51,7 +51,7 @@ jobs:
       - name: migrations et import des sources
         run: |
           alembic upgrade head
-          python -m la_gazette_des_sorciers.database.import_sources
+          python -m la_gazette_des_sorciers.database.import_sources sources.csv
       - name: collecte (image gazette, comme dans Kestra)
         # une source en échec ne doit pas masquer le verdict des tests e2e
         continue-on-error: true
