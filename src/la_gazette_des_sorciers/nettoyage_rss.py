@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 
+from la_gazette_des_sorciers.rapport_qualite import construire_rapport, ecrire_rapport
 from la_gazette_des_sorciers.regles import appliquer_regles
 
 load_dotenv()
@@ -17,6 +18,9 @@ load_dotenv()
 logger = logging.getLogger("nettoyage_rss")
 
 MAX_AGE = timedelta(hours=24)
+# R00 = validité de la donnée (les règles éditoriales sont dans regles.py)
+R00_INVALIDE = "R00_invalide"
+R00_TROP_VIEUX = "R00_trop_vieux"
 PARIS = ZoneInfo("Europe/Paris")
 # Le Parisien : pas de pubDate, mais le lien finit par -jj-mm-aaaa-IDENTIFIANT.php
 DATE_DANS_URL = re.compile(r"-(\d{2})-(\d{2})-(\d{4})-[A-Za-z0-9]+\.php$")
@@ -115,9 +119,18 @@ def nettoyer_flux(data: dict) -> tuple[list[dict], list[dict], dict]:
         article = nettoyer_item(item, source_id, fetched_at)
         if article is None:
             stats["invalides"] += 1
+            rejets.append(
+                {
+                    "source_id": source_id,
+                    "title": nettoyer_texte(item.get("title")),
+                    "url": texte(item.get("link")),
+                    "regle": R00_INVALIDE,
+                }
+            )
             continue
         if fetched_at - datetime.fromisoformat(article["published_at"]) > MAX_AGE:
             stats["trop_vieux"] += 1
+            rejets.append({**article, "regle": R00_TROP_VIEUX})
             continue
         regle = appliquer_regles(article)
         if regle:
@@ -142,12 +155,22 @@ def stocker_propre(articles: list[dict], data: dict, clean_dir: Path) -> Path:
 def main():
     data_dir = Path(os.environ["DATA_DIR"]).resolve()
     json_dir, clean_dir = data_dir / "json", data_dir / "clean"
+    rapports_dir = Path(os.environ.get("RAPPORTS_DIR", "rapports")).resolve()
+    resultats = []
 
     for fichier in sorted(json_dir.rglob("*.json")):
         with open(fichier, encoding="utf-8") as f:
             data = json.load(f)
         articles, rejets, stats = nettoyer_flux(data)
         stocker_propre(articles, data, clean_dir)
+        resultats.append(
+            {
+                "source_id": data["source_id"],
+                "entres": stats["total"],
+                "gardes": len(articles),
+                "rejets": rejets,
+            }
+        )
         logger.info(
             "source=%s gardes=%d total=%d invalides=%d trop_vieux=%d rejetes=%d "
             "date_url=%d date_collecte=%d",
@@ -160,6 +183,9 @@ def main():
             stats["date_url"],
             stats["date_collecte"],
         )
+
+    chemin = ecrire_rapport(construire_rapport(resultats), datetime.now(UTC).date(), rapports_dir)
+    logger.info("rapport de qualité écrit : %s", chemin)
 
 
 if __name__ == "__main__":
