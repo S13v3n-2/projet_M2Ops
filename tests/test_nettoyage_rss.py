@@ -1,0 +1,149 @@
+from datetime import date
+
+from la_gazette_des_sorciers.nettoyage_rss import (
+    date_depuis_url,
+    fichiers_du_jour,
+    lignes_pour_la_base,
+    nettoyer_flux,
+    parser_date,
+)
+
+
+def flux(items, fetched_at="2026-10-21T08:00:00+00:00"):
+    return {
+        "source_id": "test",
+        "fetched_at": fetched_at,
+        "content": {"rss": {"channel": {"item": items}}},
+    }
+
+
+def test_parser_date_gmt_et_decalage():
+    assert parser_date("Wed, 21 Oct 2026 06:59:49 GMT").isoformat() == "2026-10-21T06:59:49+00:00"
+    assert parser_date("Wed, 21 Oct 2026 09:28:20 +0200").isoformat() == "2026-10-21T07:28:20+00:00"
+    assert parser_date("n'importe quoi") is None
+
+
+def test_un_seul_item_et_guid_dict():
+    item = {
+        "title": " Titre <b>gras</b> &amp; co ",
+        "link": "https://exemple.fr/a",
+        "guid": {"@isPermaLink": "true", "#text": "https://exemple.fr/a"},
+        "pubDate": "Wed, 21 Oct 2026 09:28:20 +0200",
+        "description": "<p>Texte</p>",
+    }
+    articles, rejets, stats = nettoyer_flux(flux(item))
+    assert stats["total"] == 1
+    assert articles[0]["title"] == "Titre gras & co"
+    assert articles[0]["guid"] == "https://exemple.fr/a"
+    assert articles[0]["description"] == "Texte"
+
+
+def test_date_depuis_url_parisien():
+    url = "https://www.leparisien.fr/sports/psg/titre-21-10-2026-5JRXKZY6JZHNHDAZRSKQLVZGUI.php"
+    assert date_depuis_url(url).isoformat() == "2026-10-20T22:00:00+00:00"
+    assert date_depuis_url("https://exemple.fr/sans-date") is None
+    assert date_depuis_url("https://e.fr/t-99-99-2026-ABC.php") is None
+
+
+def test_filtre_24h_invalides_et_origine_de_la_date():
+    items = [
+        {"title": "vieux", "link": "https://e.fr/1", "pubDate": "Mon, 05 Oct 2026 11:33:13 +0200"},
+        {"title": "", "link": "https://e.fr/2"},
+        {"title": "sans date", "link": "https://e.fr/3"},
+        {"title": "ok", "link": "https://e.fr/4", "pubDate": "Wed, 21 Oct 2026 06:00:00 GMT"},
+        {"title": "parisien", "link": "https://e.fr/t-21-10-2026-AB12.php"},
+        {"title": "parisien vieux", "link": "https://e.fr/t-19-10-2026-AB12.php"},
+    ]
+    articles, rejets, stats = nettoyer_flux(flux(items))
+    assert [(a["title"], a["date_source"]) for a in articles] == [
+        ("sans date", "collecte"),
+        ("ok", "pubDate"),
+        ("parisien", "url"),
+    ]
+    assert articles[0]["published_at"] == "2026-10-21T08:00:00+00:00"
+    assert stats == {
+        "total": 6,
+        "invalides": 1,
+        "trop_vieux": 2,
+        "date_url": 1,
+        "date_collecte": 1,
+    }
+
+
+def test_regle_horoscope_va_dans_les_rejets():
+    items = [
+        {
+            "title": "Horoscope de la semaine",
+            "link": "https://e.fr/h",
+            "pubDate": "Wed, 21 Oct 2026 06:00:00 GMT",
+        }
+    ]
+    articles, rejets, stats = nettoyer_flux(flux(items))
+    assert articles == []
+    assert rejets[0]["regle"] == "R01_horoscope"
+
+
+def test_lignes_pour_la_base_en_utc_sans_fuseau():
+    data = {**flux([]), "filepath": "data/xml/test.xml"}
+    articles = [
+        {
+            "source_id": "test",
+            "title": "t",
+            "url": "https://e.fr/a",
+            "guid": "g",
+            "published_at": "2026-10-21T06:00:00+00:00",
+            "description": "d",
+            "date_source": "pubDate",
+        }
+    ]
+    rejets = [
+        {"source_id": "test", "title": "h", "url": "https://e.fr/h", "regle": "R01_horoscope"}
+    ]
+    lignes_articles, lignes_rejets = lignes_pour_la_base(articles, rejets, data)
+    assert lignes_articles[0]["published_at"].isoformat() == "2026-10-21T06:00:00"
+    assert lignes_articles[0]["collecte_le"].isoformat() == "2026-10-21T08:00:00"
+    assert lignes_articles[0]["fichier_brut"] == "data/xml/test.xml"
+    assert lignes_rejets[0]["regle"] == "R01_horoscope"
+
+
+def test_date_future_et_description_bornee():
+    items = [
+        {"title": "futur", "link": "https://e.fr/f", "pubDate": "Thu, 22 Oct 2026 06:00:00 GMT"},
+        {
+            "title": "long",
+            "link": "https://e.fr/l",
+            "pubDate": "Wed, 21 Oct 2026 07:30:00 GMT",
+            "description": "mot " * 200,
+        },
+    ]
+    articles, rejets, stats = nettoyer_flux(flux(items))
+    assert [r["regle"] for r in rejets] == ["R00_date_future"]
+    assert len(articles) == 1
+    assert len(articles[0]["description"]) <= 300
+
+
+def test_fichiers_du_jour_ignore_les_autres_jours(tmp_path):
+    for jour in ("2026-11-11", "2026-11-12"):
+        (tmp_path / jour).mkdir()
+        (tmp_path / jour / "b.json").write_text("{}")
+        (tmp_path / jour / "a.json").write_text("{}")
+    fichiers = fichiers_du_jour(tmp_path, date(2026, 11, 12))
+    assert [f.parent.name for f in fichiers] == ["2026-11-12", "2026-11-12"]
+    assert [f.name for f in fichiers] == ["a.json", "b.json"]
+    assert fichiers_du_jour(tmp_path, date(2026, 1, 1)) == []
+
+
+def test_titre_et_extrait_a_l_encodage_casse_sont_repares():
+    titre = "« Everytime » : la critique d'un film sur un deuil"
+    extrait = "Un récit à l’émotion rare"
+    items = [
+        {
+            "title": titre.encode("utf-8").decode("cp1252"),
+            "link": "https://e.fr/c",
+            "pubDate": "Wed, 21 Oct 2026 07:30:00 GMT",
+            "description": extrait.encode("utf-8").decode("cp1252"),
+        }
+    ]
+    articles, rejets, stats = nettoyer_flux(flux(items))
+    assert articles[0]["title"] == titre
+    assert articles[0]["description"] == extrait
