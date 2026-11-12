@@ -2,6 +2,7 @@ from datetime import date
 
 from la_gazette_des_sorciers.rapport_qualite import (
     construire_rapport,
+    deposer_rapport,
     ecrire_rapport,
     rapport_en_markdown,
 )
@@ -45,8 +46,27 @@ def test_rapport_vide_ne_plante_pas():
 def test_markdown_et_ecriture(tmp_path):
     rapport = construire_rapport(RESULTATS)
     texte = rapport_en_markdown(rapport, date(2026, 11, 12))
-    assert "# Rapport de qualité — 2026-11-12" in texte
+    assert "# Rapport de qualité - 2026-11-12" in texte
     assert "| R01_horoscope | 2 |" in texte
     chemin = ecrire_rapport(rapport, date(2026, 11, 12), tmp_path / "rapports")
     assert chemin.name == "qualite-2026-11-12.md"
     assert chemin.read_text(encoding="utf-8") == texte
+
+
+def test_deposer_rapport_ecrit_sous_rapports():
+    class FauxClient:
+        def __init__(self):
+            self.appels = []
+
+        def put_object(self, **kwargs):
+            self.appels.append(kwargs)
+
+    client = FauxClient()
+    rapport = construire_rapport(RESULTATS)
+    cle = deposer_rapport(client, "bucket", rapport, date(2026, 11, 12))
+    assert cle == "rapports/qualite-2026-11-12.md"
+    appel = client.appels[0]
+    assert appel["Bucket"] == "bucket"
+    assert appel["Key"] == cle
+    assert appel["ContentType"] == "text/markdown"
+    assert appel["Body"].decode("utf-8") == rapport_en_markdown(rapport, date(2026, 11, 12))

@@ -1,12 +1,33 @@
+import io
+import json
 from datetime import date
 
 from la_gazette_des_sorciers.nettoyage_rss import (
+    cles_du_jour_s3,
     date_depuis_url,
     fichiers_du_jour,
+    flux_du_jour,
     lignes_pour_la_base,
     nettoyer_flux,
     parser_date,
+    stocker_propre,
 )
+
+
+class FauxS3:
+    def __init__(self, objets):
+        self.objets = objets
+
+    def get_paginator(self, nom):
+        assert nom == "list_objects_v2"
+        return self
+
+    def paginate(self, Bucket, Prefix):
+        contenu = [{"Key": cle} for cle in self.objets if cle.startswith(Prefix)]
+        yield {"Contents": contenu} if contenu else {}
+
+    def get_object(self, Bucket, Key):
+        return {"Body": io.BytesIO(self.objets[Key])}
 
 
 def flux(items, fetched_at="2026-10-21T08:00:00+00:00"):
@@ -147,3 +168,51 @@ def test_titre_et_extrait_a_l_encodage_casse_sont_repares():
     articles, rejets, stats = nettoyer_flux(flux(items))
     assert articles[0]["title"] == titre
     assert articles[0]["description"] == extrait
+
+
+def test_cles_du_jour_s3_triees_et_limitees_au_jour():
+    client = FauxS3(
+        {
+            "json/2026-11-12/b.json": b"{}",
+            "json/2026-11-12/a.json": b"{}",
+            "json/2026-11-12/a.xml": b"",
+            "json/2026-11-11/c.json": b"{}",
+            "xml/2026-11-12/d.json": b"{}",
+        }
+    )
+    assert cles_du_jour_s3(client, "bucket", date(2026, 11, 12)) == [
+        "json/2026-11-12/a.json",
+        "json/2026-11-12/b.json",
+    ]
+    assert cles_du_jour_s3(client, "bucket", date(2026, 1, 1)) == []
+
+
+def test_flux_du_jour_lit_le_bucket():
+    brut = json.dumps({"source_id": "s"}).encode()
+    client = FauxS3({"json/2026-11-12/a.json": brut})
+    assert list(flux_du_jour(date(2026, 11, 12), client, "bucket")) == [{"source_id": "s"}]
+
+
+def test_flux_du_jour_lit_le_disque(tmp_path, monkeypatch):
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    (tmp_path / "json" / "2026-11-12").mkdir(parents=True)
+    (tmp_path / "json" / "2026-11-12" / "a.json").write_text('{"source_id": "d"}')
+    assert list(flux_du_jour(date(2026, 11, 12), None, None)) == [{"source_id": "d"}]
+
+
+def test_fichier_brut_prefere_s3_key_sinon_filepath():
+    base = {"fetched_at": "2026-10-21T08:00:00+00:00"}
+    rejets = [{"source_id": "s", "url": "u", "title": "t", "regle": "R"}]
+    _, via_s3 = lignes_pour_la_base([], rejets, {**base, "s3_key": "xml/j/a.xml"})
+    _, via_disque = lignes_pour_la_base([], rejets, {**base, "filepath": "xml/j/b.xml"})
+    _, sans = lignes_pour_la_base([], rejets, base)
+    assert via_s3[0]["fichier_brut"] == "xml/j/a.xml"
+    assert via_disque[0]["fichier_brut"] == "xml/j/b.xml"
+    assert sans[0]["fichier_brut"] is None
+
+
+def test_stocker_propre_sans_deux_points_dans_le_nom(tmp_path):
+    data = {"source_id": "src", "fetched_at": "2026-10-21T10:43:11.055492+00:00"}
+    chemin = stocker_propre([], data, tmp_path)
+    assert chemin.name == "20261021T104311055492Z_src.json"
+    assert chemin.parent.name == "2026-10-21"
