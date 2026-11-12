@@ -15,7 +15,8 @@ def decoder_entites(valeur: str) -> str:
 
 def reparer_encodage(valeur: str) -> str:
     """Répare un texte UTF-8 lu à tort en cp1252/latin-1 ("Ã©" -> "é")."""
-    if "Ã" not in valeur and "â€" not in valeur:
+    # "Ã" (é, à...), "Â" (« », espace insécable) et "â€" (apostrophe, tirets)
+    if not any(marque in valeur for marque in ("Ã", "Â", "â€")):
         return valeur
     for encodage in ("cp1252", "latin-1"):
         try:

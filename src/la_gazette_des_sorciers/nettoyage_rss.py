@@ -1,8 +1,9 @@
+import argparse
 import json
 import logging
 import os
 import re
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -197,7 +198,20 @@ def stocker_propre(articles: list[dict], data: dict, clean_dir: Path) -> Path:
     return chemin
 
 
+def fichiers_du_jour(json_dir: Path, jour: date) -> list[Path]:
+    # la collecte range les JSON dans un dossier par jour (date de collecte, UTC)
+    return sorted((json_dir / jour.isoformat()).glob("*.json"))
+
+
 def main():
+    parser = argparse.ArgumentParser(description="Nettoyage des flux RSS d'un jour de collecte")
+    parser.add_argument(
+        "--date",
+        type=date.fromisoformat,
+        help="jour de collecte à traiter, AAAA-MM-JJ (par défaut : aujourd'hui, UTC)",
+    )
+    jour = parser.parse_args().date or datetime.now(UTC).date()
+
     data_dir = Path(os.environ["DATA_DIR"]).resolve()
     json_dir, clean_dir = data_dir / "json", data_dir / "clean"
     rapports_dir = Path(os.environ.get("RAPPORTS_DIR", "rapports")).resolve()
@@ -207,7 +221,12 @@ def main():
     from la_gazette_des_sorciers.database.crud_articles import inserer_articles, inserer_rejets
     from la_gazette_des_sorciers.database.db import SessionLocal
 
-    for fichier in sorted(json_dir.rglob("*.json")):
+    fichiers = fichiers_du_jour(json_dir, jour)
+    if not fichiers:
+        logger.warning("aucun JSON collecté pour le %s dans %s", jour, json_dir)
+        return
+
+    for fichier in fichiers:
         with open(fichier, encoding="utf-8") as f:
             data = json.load(f)
         articles, rejets, stats = nettoyer_flux(data)
@@ -239,7 +258,7 @@ def main():
             stats["date_collecte"],
         )
 
-    chemin = ecrire_rapport(construire_rapport(resultats), datetime.now(UTC).date(), rapports_dir)
+    chemin = ecrire_rapport(construire_rapport(resultats), jour, rapports_dir)
     logger.info("rapport de qualité écrit : %s", chemin)
 
 

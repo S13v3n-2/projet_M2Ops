@@ -1,5 +1,8 @@
+from datetime import date
+
 from la_gazette_des_sorciers.nettoyage_rss import (
     date_depuis_url,
+    fichiers_du_jour,
     lignes_pour_la_base,
     nettoyer_flux,
     parser_date,
@@ -117,3 +120,30 @@ def test_date_future_et_description_bornee():
     assert [r["regle"] for r in rejets] == ["R00_date_future"]
     assert len(articles) == 1
     assert len(articles[0]["description"]) <= 300
+
+
+def test_fichiers_du_jour_ignore_les_autres_jours(tmp_path):
+    for jour in ("2026-11-11", "2026-11-12"):
+        (tmp_path / jour).mkdir()
+        (tmp_path / jour / "b.json").write_text("{}")
+        (tmp_path / jour / "a.json").write_text("{}")
+    fichiers = fichiers_du_jour(tmp_path, date(2026, 11, 12))
+    assert [f.parent.name for f in fichiers] == ["2026-11-12", "2026-11-12"]
+    assert [f.name for f in fichiers] == ["a.json", "b.json"]
+    assert fichiers_du_jour(tmp_path, date(2026, 1, 1)) == []
+
+
+def test_titre_et_extrait_a_l_encodage_casse_sont_repares():
+    titre = "« Everytime » : la critique d'un film sur un deuil"
+    extrait = "Un récit à l’émotion rare"
+    items = [
+        {
+            "title": titre.encode("utf-8").decode("cp1252"),
+            "link": "https://e.fr/c",
+            "pubDate": "Wed, 21 Oct 2026 07:30:00 GMT",
+            "description": extrait.encode("utf-8").decode("cp1252"),
+        }
+    ]
+    articles, rejets, stats = nettoyer_flux(flux(items))
+    assert articles[0]["title"] == titre
+    assert articles[0]["description"] == extrait

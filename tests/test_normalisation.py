@@ -44,3 +44,21 @@ def test_borner_extrait():
 
 def test_nettoyer_enchaine_les_transformations():
     assert nettoyer("<p>L&#39;Ã©tÃ©   dernier</p>") == "L'été dernier"
+
+
+def casser(texte):
+    # ce que donne un flux UTF-8 lu à tort en cp1252
+    return texte.encode("utf-8").decode("cp1252")
+
+
+def test_reparer_encodage_sur_des_titres_reels():
+    titres = [
+        "« Everytime » : la critique d'un film magnifique sur un deuil impossible",
+        "Colère lycéenne : Plainte, suspects, Macron… Le point sur l’affaire",
+        "L’horoscope de Rob Brezsny pour la semaine du 12 au 18 novembre 2026",
+        "Prix des carburants en Île-de-France : où faire le plein ?",
+    ]
+    for titre in titres:
+        assert casser(titre) != titre
+        assert reparer_encodage(casser(titre)) == titre
+        assert reparer_encodage(titre) == titre
