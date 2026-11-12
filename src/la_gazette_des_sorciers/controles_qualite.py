@@ -3,8 +3,13 @@
 Choix d'outil : assertions SQL maison en Python, pas Great Expectations ni Soda.
 Il n'y a que trois controles et une seule base, une dependance de plus dans
 l'image ne se justifie pas.
+
+Metriques : une tache docker.Run de Kestra lit sur stdout les lignes
+::{"metrics":[...]}:: et les enregistre comme metriques de la tache. Aucun client
+ni service a ajouter, la ligne est ecrite avec print() et non via logging.
 """
 
+import json
 import logging
 import sys
 from datetime import UTC, date, datetime, time, timedelta
@@ -111,6 +116,19 @@ def executer(session, jour: date, maintenant: datetime) -> dict:
     }
 
 
+def metriques_kestra(metriques: dict, jour: date) -> str:
+    liste = [
+        {
+            "name": f"gazette.controle.{cle}",
+            "type": "counter",
+            "value": valeur,
+            "tags": {"jour": jour.isoformat()},
+        }
+        for cle, valeur in metriques.items()
+    ]
+    return "::" + json.dumps({"metrics": liste}, separators=(",", ":")) + "::"
+
+
 def ouvrir_session():
     # import ici : database.db lit DATABASE_URL des l'import, ce qui casserait les tests
     from la_gazette_des_sorciers.database.db import SessionLocal
@@ -125,6 +143,7 @@ def main():
     for controle in resultat["controles"]:
         etat = "OK" if controle["ok"] else "ECHEC"
         logger.info("controle=%s %s : %s", controle["nom"], etat, controle["message"])
+    print(metriques_kestra(resultat["metriques"], maintenant.date()), flush=True)
     if not resultat["ok"]:
         echecs = [f"{c['nom']} - {c['message']}" for c in resultat["controles"] if not c["ok"]]
         logger.error("controles de qualite en echec : %s", " ; ".join(echecs))

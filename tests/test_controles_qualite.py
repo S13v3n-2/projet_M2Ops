@@ -1,4 +1,5 @@
-from datetime import datetime
+import json
+from datetime import date, datetime
 
 import pytest
 from sqlalchemy import create_engine
@@ -184,3 +185,49 @@ def test_main_ne_sort_pas_si_tout_est_ok(monkeypatch):
         lambda *args: {"ok": True, "controles": [], "metriques": {}},
     )
     controles_qualite.main()
+
+
+def test_metriques_kestra_une_ligne_au_format_kestra():
+    ligne = controles_qualite.metriques_kestra(
+        {"dates_futures": 2, "taux_rejet_max": 0.5}, date(2026, 5, 4)
+    )
+    assert len(ligne.splitlines()) == 1
+    assert ligne.startswith("::") and ligne.endswith("::")
+    assert json.loads(ligne[2:-2]) == {
+        "metrics": [
+            {
+                "name": "gazette.controle.dates_futures",
+                "type": "counter",
+                "value": 2,
+                "tags": {"jour": "2026-05-04"},
+            },
+            {
+                "name": "gazette.controle.taux_rejet_max",
+                "type": "counter",
+                "value": 0.5,
+                "tags": {"jour": "2026-05-04"},
+            },
+        ]
+    }
+
+
+@pytest.mark.parametrize("ok", [True, False])
+def test_main_imprime_les_metriques_avant_de_sortir(monkeypatch, capsys, ok):
+    monkeypatch.setattr(controles_qualite, "ouvrir_session", lambda: Session())
+    monkeypatch.setattr(
+        controles_qualite,
+        "executer",
+        lambda *args: {
+            "ok": ok,
+            "controles": [{"nom": "aucun_titre_vide", "ok": ok, "valeur": 0, "message": "m"}],
+            "metriques": {"titres_vides": 3},
+        },
+    )
+    if ok:
+        controles_qualite.main()
+    else:
+        with pytest.raises(SystemExit):
+            controles_qualite.main()
+    lignes = [ligne for ligne in capsys.readouterr().out.splitlines() if ligne.startswith("::")]
+    assert len(lignes) == 1
+    assert json.loads(lignes[0][2:-2])["metrics"][0]["value"] == 3
