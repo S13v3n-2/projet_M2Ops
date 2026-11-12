@@ -199,7 +199,8 @@ def stocker_propre(articles: list[dict], data: dict, clean_dir: Path) -> Path:
     fetched_at_str = data["fetched_at"]
     dossier = clean_dir / datetime.fromisoformat(fetched_at_str).strftime("%Y-%m-%d")
     dossier.mkdir(parents=True, exist_ok=True)
-    chemin = dossier / f"{fetched_at_str}_{data['source_id']}.json"
+    horodatage = datetime.fromisoformat(fetched_at_str).astimezone(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+    chemin = dossier / f"{horodatage}_{data['source_id']}.json"
     with open(chemin, "w", encoding="utf-8") as f:
         json.dump(articles, f, ensure_ascii=False, indent=4)
     return chemin
