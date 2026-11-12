@@ -2,7 +2,9 @@ id: gazette_download_article
 namespace: gazette
 
 description: |
-  Pipeline quotidienne : collecte des flux RSS (XML brut + JSON) puis nettoyage.
+  Collecte des flux RSS (XML brut + JSON) vers le bronze.
+  Le nettoyage n'est plus dans ce flow : gazette_clear_article se declenche
+  a la fin réussie de la collecte.
   Chaque étape tourne dans un conteneur de l'image gazette:local
   (docker compose --profile build build).
 

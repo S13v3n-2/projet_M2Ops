@@ -7,6 +7,8 @@ RUN pip install -r requirements.txt
 
 COPY pyproject.toml README.md ./
 COPY src/ ./src/
+COPY alembic.ini ./
+COPY alembic/ ./alembic/
 RUN pip install --no-deps .
 
 COPY sources.csv ./

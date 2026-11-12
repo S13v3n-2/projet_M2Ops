@@ -2,10 +2,38 @@ id: gazette_clear_article
 namespace: gazette
 
 description: |
-  Nettoyage des articles : deuxième étape de la pipeline, après gazette_download_article.
-  Lit les JSON bruts de la collecte, ne garde que titre, résumé, lien, date et source,
-  retire le HTML, uniformise les dates en UTC, écarte les articles de plus de 24 h
-  et supprime les doublons. Produit un fichier d'articles propres, prêt à être chargé
-  par gazette_push_article.
+  Nettoyage des articles : se déclenche à la fin réussie de gazette_download_article.
+  Lit les JSON bruts (bronze) dans le bucket RustFS sous json/<jour>/, applique les
+  règles de nettoyage, écrit les articles propres et les rejets dans PostgreSQL
+  et dépose le rapport de qualité sous rapports/ dans le bucket.
   L'étape tourne dans un conteneur de l'image gazette:local
   (docker compose --profile build build).
+
+tasks:
+  - id: nettoyage
+    type: io.kestra.plugin.docker.Run
+    containerImage: gazette:local
+    pullPolicy: NEVER
+    commands:
+      - python
+      - -m
+      - la_gazette_des_sorciers.nettoyage_rss
+    networkMode: gazette
+    env:
+      DATABASE_URL: "{{ envs.database_url }}"
+      S3_ENABLED: "{{ envs.s3_enabled }}"
+      S3_ENDPOINT_URL: "{{ envs.s3_endpoint_url }}"
+      S3_BUCKET: "{{ envs.s3_bucket }}"
+      S3_REGION: "{{ envs.s3_region }}"
+      AWS_ACCESS_KEY_ID: "{{ envs.aws_access_key_id }}"
+      AWS_SECRET_ACCESS_KEY: "{{ envs.aws_secret_access_key }}"
+    volumes:
+      - "{{ envs.data_dir }}:/data"
+
+triggers:
+  - id: apres-collecte
+    type: io.kestra.plugin.core.trigger.Flow
+    dependsOn:
+      - namespace: gazette
+        flowId: gazette_download_article
+        states: [SUCCESS]

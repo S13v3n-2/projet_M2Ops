@@ -10,6 +10,7 @@
 #   build : construction de l'image gazette:local
 #
 #   docker compose --profile build build   # construit l'image gazette:local
+#   docker compose run --rm migrate        # applique les migrations alembic (une fois db prête)
 #   docker compose up -d                   # démarre db, kestra + les profils actifs
 #
 # Kestra : http://localhost:8080 - Console RustFS : http://localhost:9001
@@ -98,7 +99,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
       # Variables ENV_* : disponibles dans les flows via {{ envs.nom_en_minuscules }}
-      # Chemin ABSOLU côté hôte du dossier de données (nettoyage, encore en local) :
+      # Chemin ABSOLU côté hôte du dossier de données (mode disque du nettoyage) :
       # les conteneurs lancés par Kestra le montent via le démon Docker.
       ENV_DATA_DIR: ${DATA_DIR_HOST:?à définir dans .env}
       # Dans le réseau docker, db et rustfs se joignent par leur nom de service
@@ -149,3 +150,16 @@ services:
     image: gazette:local
     build:
       context: .
+
+  # Migrations alembic : service ponctuel, à lancer avec docker compose run --rm migrate.
+  migrate:
+    profiles: [build]
+    image: gazette:local
+    build:
+      context: .
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-la_gazette_des_sorciers}
+    depends_on:
+      db:
+        condition: service_healthy
