@@ -175,6 +175,12 @@ Les workflows GitHub Actions (`.github/workflows/`) :
 | `integration.yml` | pull request vers `develop` ou `main` | tests d'intégration avec PostgreSQL et RustFS en services, identifiants jetables |
 | `nightly.yml` | tous les jours à 2h (UTC) et à la demande | stack docker compose (db, rustfs), migrations, import des sources, collecte avec l'image `gazette`, puis tests e2e |
 
+### Détection de secrets
+
+Le workflow `secrets.yml` lance gitleaks sur tout l'historique git : à chaque push, à chaque pull request vers `develop` ou `main`, et chaque lundi à 3h (UTC). Il échoue si une clé, un mot de passe ou un token est trouvé. Les valeurs factices autorisées (`.env.example`, identifiants jetables de la CI) sont listées dans `.gitleaks.toml`.
+
+Un secret publié doit être considéré comme compromis : il faut le révoquer ou le changer, le retirer du code ne suffit pas car il reste dans l'historique.
+
 ## Pour aller plus loin
 
 1. Génération du requirements.txt
