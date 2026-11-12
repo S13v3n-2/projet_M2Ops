@@ -123,6 +123,19 @@ Les clés S3 suivent les mêmes chemins relatifs qu'en mode local, par exemple
 `json/2026-10-21/flux.json`. Les métadonnées contiennent `filepath` en mode
 local et `s3_key` en mode S3 pour retrouver le XML à convertir.
 
+## Nettoyage
+
+```bash
+python -m la_gazette_des_sorciers.nettoyage_rss [--date AAAA-MM-JJ]
+```
+
+Le nettoyage traite les JSON bruts d'un jour de collecte (aujourd'hui en UTC par défaut) :
+
+- `S3_ENABLED=true` : il lit les objets `json/<jour>/*.json` du bucket RustFS. Aucun JSON propre n'est écrit sur disque, les articles et les rejets vont dans PostgreSQL et le rapport de qualité est déposé sous `rapports/qualite-<jour>.md` dans le bucket.
+- `S3_ENABLED=false` : il lit `DATA_DIR/json/<jour>/`, écrit les JSON propres dans `DATA_DIR/clean/<jour>/` et le rapport dans `RAPPORTS_DIR` (`rapports/` par défaut, ignoré par git).
+
+La colonne `fichier_brut` des tables `articles_propres` et `rejets` vaut `s3_key` (mode S3) ou `filepath` (mode disque). Les migrations doivent être appliquées avant (voir plus bas).
+
 ## Docker
 
 1. Construction de l'image Docker
@@ -140,7 +153,9 @@ docker run --rm la_gazette_des_sorciers
 ## Pipeline Kestra
 
 Kestra lance chaque étape dans un conteneur de l'image `gazette:local` :
-`collecte` (flux RSS -> XML et JSON bruts dans le bucket RustFS) puis `nettoyage` (-> `data/clean/<date>/articles.json`).
+`collecte` (flux RSS -> XML et JSON bruts dans le bucket RustFS) puis `nettoyage` (-> articles et rejets dans PostgreSQL, rapport sous `rapports/` dans le bucket).
+
+Le flow `gazette_clear_article` se déclenche tout seul à la fin réussie de `gazette_download_article` (déclencheur `Flow` avec `dependsOn`). Il n'y a plus de flow `gazette_push_article` : l'insertion en base est faite par le nettoyage.
 
 Les tâches rejoignent le réseau docker `gazette` et reçoivent `DATABASE_URL` et les variables `S3_*` depuis le conteneur Kestra. Dans ce réseau, la base est `db:5432` et le data lake `http://rustfs:9000`.
 
@@ -151,9 +166,13 @@ docker compose up -d                    # tous les services, Kestra sur http://l
 curl -u admin@kestra.io:Admin1234 -X POST -H 'Content-Type: application/x-yaml'      --data-binary @kestra/flows/gazette_download_article.yml http://localhost:8080/api/v1/main/flows   # déploie un flow
 ```
 
-Penser à appliquer les migrations (`alembic upgrade head`) et à importer les sources avant la première exécution.
-Le flow `gazette/gazette_download_article` se lance depuis l'interface (Execute) ou par son déclencheur planifié.
-Le nettoyage lit encore les données sur disque dans `data/` (ignoré par git).
+Appliquer les migrations avant la première exécution, puis importer les sources :
+
+```bash
+docker compose run --rm migrate         # alembic upgrade head dans l'image gazette:local, une fois db prête
+```
+
+Déployer les deux flows (`gazette_download_article` et `gazette_clear_article`). Le flow `gazette/gazette_download_article` se lance depuis l'interface (Execute) ou par son déclencheur planifié, le nettoyage suit automatiquement.
 
 ## Tests et CI
 
@@ -165,7 +184,7 @@ Les tests sont séparés en niveaux avec des marqueurs pytest. Un simple `pytest
 | Intégration | `integration` | PostgreSQL et S3 qui tournent (`.env`) | `pytest -m integration` |
 | E2E | `e2e` | stack démarrée et une collecte déjà lancée | `pytest -m e2e` |
 
-Les tests d'intégration utilisent un bucket jetable et appliquent les migrations Alembic. Les tests e2e vérifient que le bucket du jour contient au moins `E2E_MIN_SOURCES` sources (8 par défaut) et que la base enregistre les collectes réussies.
+Les tests d'intégration utilisent un bucket jetable et appliquent les migrations Alembic. `test_nettoyage_reel` dépose un JSON dans le bucket, lance le nettoyage et vérifie les lignes en base et le rapport sous `rapports/`. Les tests e2e vérifient que le bucket du jour contient au moins `E2E_MIN_SOURCES` sources (8 par défaut) et que la base enregistre les collectes réussies.
 
 Les workflows GitHub Actions (`.github/workflows/`) :
 
