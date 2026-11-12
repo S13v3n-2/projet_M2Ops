@@ -23,7 +23,7 @@ def test_un_seul_item_et_guid_dict():
         "pubDate": "Wed, 21 Oct 2026 09:28:20 +0200",
         "description": "<p>Texte</p>",
     }
-    articles, stats = nettoyer_flux(flux(item))
+    articles, rejets, stats = nettoyer_flux(flux(item))
     assert stats["total"] == 1
     assert articles[0]["title"] == "Titre gras & co"
     assert articles[0]["guid"] == "https://exemple.fr/a"
@@ -46,7 +46,7 @@ def test_filtre_24h_invalides_et_origine_de_la_date():
         {"title": "parisien", "link": "https://e.fr/t-21-10-2026-AB12.php"},
         {"title": "parisien vieux", "link": "https://e.fr/t-19-10-2026-AB12.php"},
     ]
-    articles, stats = nettoyer_flux(flux(items))
+    articles, rejets, stats = nettoyer_flux(flux(items))
     assert [(a["title"], a["date_source"]) for a in articles] == [
         ("sans date", "collecte"),
         ("ok", "pubDate"),
@@ -60,3 +60,16 @@ def test_filtre_24h_invalides_et_origine_de_la_date():
         "date_url": 1,
         "date_collecte": 1,
     }
+
+
+def test_regle_horoscope_va_dans_les_rejets():
+    items = [
+        {
+            "title": "Horoscope de la semaine",
+            "link": "https://e.fr/h",
+            "pubDate": "Wed, 21 Oct 2026 06:00:00 GMT",
+        }
+    ]
+    articles, rejets, stats = nettoyer_flux(flux(items))
+    assert articles == []
+    assert rejets[0]["regle"] == "R01_horoscope"

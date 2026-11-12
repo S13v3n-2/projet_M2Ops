@@ -10,6 +10,8 @@ from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 
+from la_gazette_des_sorciers.regles import appliquer_regles
+
 load_dotenv()
 
 logger = logging.getLogger("nettoyage_rss")
@@ -92,7 +94,7 @@ def nettoyer_item(item: dict, source_id: str, fetched_at: datetime) -> dict | No
     }
 
 
-def nettoyer_flux(data: dict) -> tuple[list[dict], dict]:
+def nettoyer_flux(data: dict) -> tuple[list[dict], list[dict], dict]:
     source_id = data["source_id"]
     fetched_at = datetime.fromisoformat(data["fetched_at"])
     contenu = data.get("content") or {}
@@ -101,6 +103,7 @@ def nettoyer_flux(data: dict) -> tuple[list[dict], dict]:
     items = en_liste((contenu.get("rss") or {}).get("channel", {}).get("item"))
 
     articles = []
+    rejets = []
     stats = {
         "total": len(items),
         "invalides": 0,
@@ -116,10 +119,14 @@ def nettoyer_flux(data: dict) -> tuple[list[dict], dict]:
         if fetched_at - datetime.fromisoformat(article["published_at"]) > MAX_AGE:
             stats["trop_vieux"] += 1
             continue
+        regle = appliquer_regles(article)
+        if regle:
+            rejets.append({**article, "regle": regle})
+            continue
         if article["date_source"] != "pubDate":
             stats[f"date_{article['date_source']}"] += 1
         articles.append(article)
-    return articles, stats
+    return articles, rejets, stats
 
 
 def stocker_propre(articles: list[dict], data: dict, clean_dir: Path) -> Path:
@@ -139,15 +146,17 @@ def main():
     for fichier in sorted(json_dir.rglob("*.json")):
         with open(fichier, encoding="utf-8") as f:
             data = json.load(f)
-        articles, stats = nettoyer_flux(data)
+        articles, rejets, stats = nettoyer_flux(data)
         stocker_propre(articles, data, clean_dir)
         logger.info(
-            "source=%s gardes=%d total=%d invalides=%d trop_vieux=%d date_url=%d date_collecte=%d",
+            "source=%s gardes=%d total=%d invalides=%d trop_vieux=%d rejetes=%d "
+            "date_url=%d date_collecte=%d",
             data["source_id"],
             len(articles),
             stats["total"],
             stats["invalides"],
             stats["trop_vieux"],
+            len(rejets),
             stats["date_url"],
             stats["date_collecte"],
         )
